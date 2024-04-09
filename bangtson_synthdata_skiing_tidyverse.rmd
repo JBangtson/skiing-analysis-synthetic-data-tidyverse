@@ -1,0 +1,239 @@
+---
+title: "Tidymodels Synthetic Data Skiing Analysis"
+author: "Justin Bangtson"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+html_document:
+    toc: true
+    toc_depth: 6
+    number_sections: true
+    toc_float: true
+    code_folding: hide
+    theme: flatly
+    code_download: true
+---
+
+```{r setup, include=FALSE, warning=FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(error = TRUE)
+
+library(tidyverse)
+library(scales)
+library(ggplot2)
+library(hrbrthemes)
+library(reshape2)
+library(rpart)
+library(rpart.plot)
+library(tidymodels)
+library(broom)
+
+
+set.seed(19191919)
+
+d <- read_csv("skiing.csv")
+```
+
+## Pre-Introduction Note
+I kept most of the writing from the original synthetic analysis in this document because it is still accurate. Instead of using the default R modeling techniques the tidymodels packages will be used for the analysis and the metrics to evaluate model performances was also implemented.
+
+## Introduction
+
+This report is an analysis of synthetic data created by a student in the UMT MSBA program regarding skiing and the predictor variables involved in explaining the variance in the response variable, ski runs. The report will have three main sections. The first section will create and evaluate the multiple linear regression (MLR) model used to assess the term's impact on the response variable. A sub-section will explore the MLR model's performance. Second, this report will use a decision tree to further evaluate the regression model and assist in predicting how the response variable, runs and varies based on the predictor variables. In a sub-section, we will evaluate the decision tree. In the final section the metrics to evaluate the performance of the models will be compared. 
+
+
+
+
+```{r datasplitting, message=FALSE, echo=FALSE}
+
+#train_index <- sample(1:nrow(d), 0.8 * nrow(d))
+#training_data <- d[train_index, ]
+#testing_data <- d[-train_index, ]
+
+iris_split = initial_split(d, prop = .8)
+
+d.training = iris_split %>%
+  training()
+
+d.testing = iris_split %>%
+  testing()
+
+
+
+```
+
+
+## Regression Model
+
+The first section of this report builds an MLR model to assess the variability of the response variable, and runs based on the terms within the data. By building and testing multiple MLR models, the predictor variables estimated peak temperature, distance from home, money spent on food, number of companions, equipment type, and ticket type explained the variance of the number of runs the most; all other variables did not explain the variance.
+
+By returning the summary of the model, we end up with these results which will be explained below in the next section:
+
+```{r echo=FALSE}
+
+         
+#lm_model <- lm(runs ~ est_peak_temp + distance_home + food_spend + num_companions + equipment + ticket , data = training_data)
+
+ski.model <- linear_reg() %>%
+  set_engine("lm")
+
+ski.fit <- ski.model %>%
+  fit(runs ~ est_peak_temp + distance_home + food_spend + num_companions + equipment + ticket , data = d.training)
+
+tidy(ski.fit$fit)
+
+print(ski.fit)
+summary(ski.fit$fit)
+
+#Hmisc::describe(d)
+
+```
+
+### Regression Model Performance and Explanation
+
+This subsection will interpret and explain the coefficients within the MLR model created to assess the variance of the number of ski runs. 
+
+First, the adjusted $R^2$ value is around 83%, meaning that the MLR model explains around 83% of the variance of the number of runs a skier does while skiing. The value of 83% is good, but not perfect; unless this model is missing a predictor variable or relationship within the coefficients, the interpretation of this lower $R^2$ value is that it is due to data loss from rounding the estimated peak temperature to the closest five degrees Fahrenheit. 
+
+From the continuous variables, the most impactful coefficient in this model is the number of companions with skiers, which surprisingly decreases the number of runs the skier makes by nearly 0.5 per companion; this is surprising that having more friends to ski with decreases the number of runs, perhaps they were too busy drinking at the summit? Next, the estimated peak temperature increases the number of runs by around 0.25 per one-degree increment (Fahrenheit). The total spent on food decreases the number of runs by nearly 0.1 per $1.00 spent on food. Last, the distance home decreases the amount of runs by around 0.02 per mile from home; the longer the trip, the shorter the amount of ski runs. 
+
+Out of the categorical coefficients, the most impactful coefficient in this model is the ticket type; having a seasonal ticket decreases runs by nearly 2 runs compared to a regular adult ticket, while a child's ticket increases runs by around 0.5. How the skier has the equipment has a significant impact as well. A skier will do almost an entire run less if they rent the equipment rather than owning the equipment; it's possible that they spent more time out of the day getting prepared due to the hassle of renting. 
+
+Some of the variables that made no impact on the explanation of the variance of the amount of runs a skier makes were age and gender.
+
+Looking at Figure 1 below, the report includes a visualization of how well this model does at predicting the variance of runs.
+
+```{r prediction_model, message=F, echo=FALSE, fig.cap="Figure 1: Visualization of the prediction from the multiple linear regression model used to assess the variance of the number of runs a skier makes using the estimated peak temperature (Fahrenheit) on the x-axis. The model explains around 82% of the variance, which can be visualized here."}
+
+d.testing <- d.testing %>%
+  mutate(pred_lm = predict(ski.fit, d.testing) %>%
+  pull(.pred))
+
+
+
+for_plot <- d.testing %>% 
+  select(runs, est_peak_temp) %>% 
+  mutate(type="Actuals")
+
+
+for_plot <- for_plot %>% 
+  bind_rows(tibble(
+    est_peak_temp = d.testing$est_peak_temp,
+    runs = d.testing$pred_lm,
+    type="Prediction"
+  ))
+
+
+ggplot(for_plot, 
+       aes(x=est_peak_temp,y=runs,group=type,color=type)) + 
+  geom_point(alpha = 0.2) + 
+  geom_smooth(data = subset(for_plot, type == "Actuals"), se = FALSE, color = "red") +
+  geom_smooth(data = subset(for_plot, type == "Prediction"), se = FALSE, color = "#006652") +
+  scale_y_continuous() +
+  theme_minimal() + 
+  theme(panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title = element_text(size = 13, face = "bold"), 
+        axis.text = element_text(size = 11, face = "bold"),
+        axis.text.x = element_text(size=11, color = "black"),
+        axis.text.y = element_text(size=11, face="bold", color = "black"),
+        plot.title = element_text(size = 16, face = "bold")) + 
+  labs(x="Estimated Peak Temperature (F)",
+       y="Runs",
+       title="",
+       color="Source")
+
+
+
+
+
+
+
+```
+
+```{r prediction_model_comparision, message=F, echo=FALSE, fig.cap="Figure 2: Visualization of the prediction from the multiple linear regression model used to assess the variance of the number of runs a skier makes using the the actual runs on the x-axis. The model explains around 82% of the variance and does well at predicting the runs from a value of five to fifteen runs, while lower than five and greater than fifteen runs do worse in the prediction."}
+
+ggplot(d.testing,
+       aes(x=runs,y=pred_lm)) + 
+  geom_point(alpha=0.05) + 
+  geom_abline(slope=1,intercept=0) + 
+  theme_minimal()
+```
+
+
+## Decision Tree
+
+Visualized by Figure 2 below, the decision tree shows that the estimated peak temperature was most impactful in explaining the variance of the amount of runs a skier did, next is the distance from home, and then money spent on food. 
+
+The skiers with the most runs, also the minority of skiers within this dataset, experienced peak temperatures less than 13 and greater than or equal to 3 degrees Fahrenheit, lived less than 86 miles away from home, and spent less than $8.00 on food. 
+
+Most of the skiers within this data experienced peak temperatures less than 13 and greater than or equal to 3 degrees Fahrenheit and were simply greater than or equal to 86 miles away from home regardless of the amount they spent on food. 
+
+The majority of skiers, nearly 60%, skied on days that peak temperatures less than 13 degrees Fahrenheit which shows that the best days for business at this location were on the colder days. However, most within that section skied on days that were also above or equal to 3 degrees, so the best temperature appears to be somewhere between 3 and 13 degrees. 
+
+
+
+### Decision Tree Explanation
+
+
+
+```{r warning=FALSE, message=FALSE, echo=FALSE,fig.cap="Figure 2: With a mean absolute error value of nearly 2, this decision tree assesses the most significant impacts of the number of runs a skier makes to be the estimated peak temperature (Fahrenheit), distance home (miles), and food spent (USD) respectively."}
+
+ski.model.tree <- decision_tree() %>%  
+  set_engine("rpart") %>% 
+  set_mode("regression")
+
+ski.fit.tree <- ski.model.tree %>%  
+  fit(runs ~ est_peak_temp + distance_home + food_spend + num_companions + equipment + ticket , data = d.training)
+
+d.testing <- d.testing %>%
+  mutate(pred_tree = predict(ski.fit.tree, d.testing) %>%
+  pull(.pred))
+
+
+rpart.plot(ski.fit.tree$fit,roundint=F)
+
+```
+
+## Metric Differences
+
+```{r metric_compare}
+#MLR 
+metrics(d.testing, truth = runs, estimate = pred_lm)
+
+#Tree
+metrics(d.testing,truth=runs,estimate=pred_tree)
+
+```
+The RMSE, RSQ, and MAE are metrics used to evaluate the performance of the models by comparing the actual response variable's values to the predicted values. The first metrics shown is the MLR model's metrics while the latter is the decision tree's metrics. The decision tree's metrics are worse than the MLR metrics, which means that the MLR model is more accurate at explaining the variance of the response variable, runs, based on the predictor variables used in the models. The absolute value of the differences of the RMSE, RSQ, and MAE are 0.70, 0.22, and 0.55, respectively. 
+
+## Conclusion
+
+In summary, this report utilized two modeling techniques, multiple linear regression and decision trees, to analyze the factors influencing the number of runs a skier completes during their ski trip. The initial section of the report evaluated the multiple linear regression (MLR) model's performance. The MLR model demonstrated proficiency in predicting the number of runs, accounting for approximately 82% of the variance. Subsequently, a decision tree was employed to further investigate the variables affecting the skier's run count. Analysis of the mean absolute error (MAE) suggested an average prediction error of around two runs, consistent with the trend observed in the MLR model's $R^2$ value. Finally, the metrics used to evaluate the performance of the models were compared which showed that the multiple linear regression model predicted the variance of the runs better than the decision tree model.
+
+
+### Appendix: Description of the Skiing Dataset
+
+The skiing synthetic dataset is a comprehensive collection of synthetic data. 
+
+The dataset includes the following attributes:
+
+- `equipment`: Categorical. Whether a skier owns or rents their equipment.
+
+- `est_peak_temp`: Numeric. The skier’s estimated temperature (in 5 degrees Fahrenheit increments) at the peak.
+
+- `num_companions`: Numeric. Number of people skiing with the skier.
+
+- `ticket`: Categorical. The type of ticket used by the skier.
+
+- `gender`: Categorical. Gender provided by the skier.
+
+- `distance_home`: Numeric. Total distance (in miles) traveled by the skier from home.
+
+- `food_spend`: Numeric. Skier’s spend (in dollars) on food at the resort.
+
+- `age`: Numeric. Age (in years) of the skier.
+
+- `runs`: Numeric. Total number of runs completed by the skier.
+
+
+
+
